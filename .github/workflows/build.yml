@@ -1,0 +1,54 @@
+name: Build LabCPFProvider x64 v4
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare source
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          .\scripts\prepare-source.ps1
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: powershell
+        run: |
+          msbuild .\generated\SampleV2CredentialProvider.vcxproj /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+
+      - name: Collect artifact
+        shell: powershell
+        run: |
+          $dll = Get-ChildItem .\generated -Recurse -Filter "SampleV2CredentialProvider.dll" |
+                 Sort-Object LastWriteTime -Descending |
+                 Select-Object -First 1
+
+          if (-not $dll) {
+            Get-ChildItem .\generated -Recurse
+            throw "DLL nao encontrada."
+          }
+
+          New-Item -ItemType Directory -Force .\artifact | Out-Null
+          Copy-Item $dll.FullName .\artifact\LabCPFProvider.dll -Force
+          Copy-Item .\installer\register.reg .\artifact\register.reg -Force
+          Copy-Item .\installer\unregister.reg .\artifact\unregister.reg -Force
+          Copy-Item .\installer\CRIAR_CONTA_TESTE.cmd .\artifact\CRIAR_CONTA_TESTE.cmd -Force
+          Copy-Item .\README.md .\artifact\README.md -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LabCPFProvider-x64-v4
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30

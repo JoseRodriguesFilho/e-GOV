@@ -1,0 +1,441 @@
+#include <windows.h>
+#include <winhttp.h>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <cwctype>
+
+#include "LabApi.h"
+
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "advapi32.lib")
+
+namespace
+{
+    constexpr wchar_t kRegPath[] = L"SOFTWARE\\LabCPFProvider";
+    constexpr size_t kMaxResponse = 16 * 1024;
+
+    class HttpHandle
+    {
+    public:
+        explicit HttpHandle(HINTERNET h = nullptr) : _h(h) {}
+        ~HttpHandle()
+        {
+            if (_h)
+            {
+                WinHttpCloseHandle(_h);
+            }
+        }
+
+        operator HINTERNET() const { return _h; }
+        bool valid() const { return _h != nullptr; }
+
+        HttpHandle(const HttpHandle&) = delete;
+        HttpHandle& operator=(const HttpHandle&) = delete;
+
+    private:
+        HINTERNET _h;
+    };
+
+    bool ReadRegistryString(PCWSTR valueName, std::wstring& value)
+    {
+        HKEY hKey = nullptr;
+        LONG result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            kRegPath,
+            0,
+            KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+            &hKey);
+
+        if (result != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        DWORD type = 0;
+        DWORD cbData = 0;
+        result = RegQueryValueExW(hKey, valueName, nullptr, &type, nullptr, &cbData);
+
+        if (result != ERROR_SUCCESS ||
+            (type != REG_SZ && type != REG_EXPAND_SZ) ||
+            cbData < sizeof(wchar_t))
+        {
+            RegCloseKey(hKey);
+            return false;
+        }
+
+        std::vector<wchar_t> buffer((cbData / sizeof(wchar_t)) + 2, L'\0');
+        result = RegQueryValueExW(
+            hKey,
+            valueName,
+            nullptr,
+            &type,
+            reinterpret_cast<LPBYTE>(buffer.data()),
+            &cbData);
+
+        RegCloseKey(hKey);
+
+        if (result != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        buffer.back() = L'\0';
+        value.assign(buffer.data());
+        return !value.empty();
+    }
+
+    DWORD ReadRegistryDword(PCWSTR valueName, DWORD defaultValue)
+    {
+        HKEY hKey = nullptr;
+        LONG result = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            kRegPath,
+            0,
+            KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+            &hKey);
+
+        if (result != ERROR_SUCCESS)
+        {
+            return defaultValue;
+        }
+
+        DWORD type = 0;
+        DWORD data = 0;
+        DWORD cbData = sizeof(data);
+
+        result = RegQueryValueExW(
+            hKey,
+            valueName,
+            nullptr,
+            &type,
+            reinterpret_cast<LPBYTE>(&data),
+            &cbData);
+
+        RegCloseKey(hKey);
+
+        if (result != ERROR_SUCCESS || type != REG_DWORD)
+        {
+            return defaultValue;
+        }
+
+        return data;
+    }
+
+    std::string WideToUtf8(const std::wstring& input)
+    {
+        if (input.empty())
+        {
+            return std::string();
+        }
+
+        int needed = WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            input.c_str(),
+            static_cast<int>(input.size()),
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+
+        if (needed <= 0)
+        {
+            return std::string();
+        }
+
+        std::string output(static_cast<size_t>(needed), '\0');
+
+        if (WideCharToMultiByte(
+                CP_UTF8,
+                WC_ERR_INVALID_CHARS,
+                input.c_str(),
+                static_cast<int>(input.size()),
+                &output[0],
+                needed,
+                nullptr,
+                nullptr) <= 0)
+        {
+            return std::string();
+        }
+
+        return output;
+    }
+
+    std::string JsonEscape(const std::string& input)
+    {
+        std::string output;
+        output.reserve(input.size() + 8);
+
+        for (char ch : input)
+        {
+            switch (ch)
+            {
+            case '\\':
+                output += "\\\\";
+                break;
+            case '"':
+                output += "\\\"";
+                break;
+            case '\b':
+                output += "\\b";
+                break;
+            case '\f':
+                output += "\\f";
+                break;
+            case '\n':
+                output += "\\n";
+                break;
+            case '\r':
+                output += "\\r";
+                break;
+            case '\t':
+                output += "\\t";
+                break;
+            default:
+                if (static_cast<unsigned char>(ch) >= 0x20)
+                {
+                    output += ch;
+                }
+                break;
+            }
+        }
+
+        return output;
+    }
+
+    std::wstring GetComputerNameString()
+    {
+        wchar_t name[MAX_COMPUTERNAME_LENGTH + 1] = {};
+        DWORD size = ARRAYSIZE(name);
+
+        if (!GetComputerNameW(name, &size))
+        {
+            return L"UNKNOWN";
+        }
+
+        return std::wstring(name, size);
+    }
+
+    bool ResponseAuthorized(const std::string& response)
+    {
+        std::string compact;
+        compact.reserve(response.size());
+
+        for (char ch : response)
+        {
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+            {
+                compact.push_back(static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(ch))));
+            }
+        }
+
+        return compact.find("\"authorized\":true") != std::string::npos;
+    }
+}
+
+LAB_AUTH_RESULT LabAuthorizeCpf(PCWSTR cpf)
+{
+    if (cpf == nullptr || *cpf == L'\0')
+    {
+        return LAB_AUTH_DENIED;
+    }
+
+    std::wstring apiUrl;
+    std::wstring apiToken;
+
+    if (!ReadRegistryString(L"ApiUrl", apiUrl) ||
+        !ReadRegistryString(L"ApiToken", apiToken))
+    {
+        return LAB_AUTH_NOT_CONFIGURED;
+    }
+
+    URL_COMPONENTS components = {};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    if (!WinHttpCrackUrl(apiUrl.c_str(), 0, 0, &components))
+    {
+        return LAB_AUTH_NOT_CONFIGURED;
+    }
+
+    if (components.nScheme != INTERNET_SCHEME_HTTPS &&
+        components.nScheme != INTERNET_SCHEME_HTTP)
+    {
+        return LAB_AUTH_NOT_CONFIGURED;
+    }
+
+    if (components.nScheme == INTERNET_SCHEME_HTTP &&
+        ReadRegistryDword(L"AllowHttp", 0) != 1)
+    {
+        return LAB_AUTH_NOT_CONFIGURED;
+    }
+
+    std::wstring host(components.lpszHostName, components.dwHostNameLength);
+    std::wstring path;
+
+    if (components.dwUrlPathLength > 0)
+    {
+        path.assign(components.lpszUrlPath, components.dwUrlPathLength);
+    }
+
+    if (components.dwExtraInfoLength > 0)
+    {
+        path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+
+    if (path.empty())
+    {
+        path = L"/";
+    }
+
+    HttpHandle session(WinHttpOpen(
+        L"LabCPFProvider/7.0",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0));
+
+    if (!session.valid())
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    WinHttpSetTimeouts(session, 1500, 1500, 2000, 3000);
+
+    HttpHandle connection(WinHttpConnect(
+        session,
+        host.c_str(),
+        components.nPort,
+        0));
+
+    if (!connection.valid())
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    DWORD flags = 0;
+    if (components.nScheme == INTERNET_SCHEME_HTTPS)
+    {
+        flags |= WINHTTP_FLAG_SECURE;
+    }
+
+    HttpHandle request(WinHttpOpenRequest(
+        connection,
+        L"POST",
+        path.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        flags));
+
+    if (!request.valid())
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    std::wstring computer = GetComputerNameString();
+    std::string cpfUtf8 = WideToUtf8(cpf);
+    std::string computerUtf8 = WideToUtf8(computer);
+
+    if (cpfUtf8.empty() || computerUtf8.empty())
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    std::string body =
+        "{\"cpf\":\"" + JsonEscape(cpfUtf8) +
+        "\",\"computer\":\"" + JsonEscape(computerUtf8) + "\"}";
+
+    std::wstring headers =
+        L"Content-Type: application/json\r\n"
+        L"Accept: application/json\r\n"
+        L"X-Lab-Token: " + apiToken + L"\r\n";
+
+    BOOL ok = WinHttpSendRequest(
+        request,
+        headers.c_str(),
+        static_cast<DWORD>(-1),
+        reinterpret_cast<LPVOID>(const_cast<char*>(body.data())),
+        static_cast<DWORD>(body.size()),
+        static_cast<DWORD>(body.size()),
+        0);
+
+    if (!ok || !WinHttpReceiveResponse(request, nullptr))
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+
+    if (!WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &statusCode,
+            &statusSize,
+            WINHTTP_NO_HEADER_INDEX))
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    if (statusCode == 401 || statusCode == 403)
+    {
+        return LAB_AUTH_CLIENT_UNAUTHORIZED;
+    }
+
+    if (statusCode != 200)
+    {
+        return LAB_AUTH_SERVICE_UNAVAILABLE;
+    }
+
+    std::string response;
+
+    while (true)
+    {
+        DWORD available = 0;
+
+        if (!WinHttpQueryDataAvailable(request, &available))
+        {
+            return LAB_AUTH_SERVICE_UNAVAILABLE;
+        }
+
+        if (available == 0)
+        {
+            break;
+        }
+
+        if (response.size() + available > kMaxResponse)
+        {
+            return LAB_AUTH_SERVICE_UNAVAILABLE;
+        }
+
+        size_t oldSize = response.size();
+        response.resize(oldSize + available);
+
+        DWORD read = 0;
+        if (!WinHttpReadData(
+                request,
+                &response[oldSize],
+                available,
+                &read))
+        {
+            return LAB_AUTH_SERVICE_UNAVAILABLE;
+        }
+
+        response.resize(oldSize + read);
+    }
+
+    if (ResponseAuthorized(response))
+    {
+        return LAB_AUTH_AUTHORIZED;
+    }
+
+    return LAB_AUTH_DENIED;
+}

@@ -1,0 +1,14 @@
+#pragma once
+
+#include <windows.h>
+
+enum LAB_AUTH_RESULT
+{
+    LAB_AUTH_AUTHORIZED = 0,
+    LAB_AUTH_DENIED,
+    LAB_AUTH_SERVICE_UNAVAILABLE,
+    LAB_AUTH_NOT_CONFIGURED,
+    LAB_AUTH_CLIENT_UNAUTHORIZED
+};
+
+LAB_AUTH_RESULT LabAuthorizeCpf(_In_z_ PCWSTR cpf);

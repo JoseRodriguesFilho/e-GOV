@@ -86,16 +86,9 @@ $x = $x.Replace('SHStrDupW(L"Submit", &_rgFieldStrings[SFI_SUBMIT_BUTTON])',
                 'SHStrDupW(L"Entrar", &_rgFieldStrings[SFI_SUBMIT_BUTTON])')
 $x = $x.Replace('*pdwAdjacentTo = SFI_PASSWORD;', '*pdwAdjacentTo = SFI_EDIT_TEXT;')
 
-$needle = @'
-    ZeroMemory(pcpcs, sizeof(*pcpcs));
+$cpfBlock = @'
 
-    // For local user, the domain and user name can be split from _pszQualifiedUserName (domain\username).
-'@
-
-$replacement = @'
-    ZeroMemory(pcpcs, sizeof(*pcpcs));
-
-    // v4 TESTE: o aluno ve apenas o CPF.
+    // v4.1 TESTE: o aluno ve apenas o CPF.
     wchar_t normalizedCpf[12] = {0};
     size_t cpfPos = 0;
 
@@ -116,7 +109,7 @@ $replacement = @'
         }
     }
 
-    if (cpfPos != 11 || wcscmp(normalizedCpf, L"__TEST_CPF__") != 0)
+    if (cpfPos != 11 || wcscmp(normalizedCpf, L"12345678909") != 0)
     {
         SHStrDupW(L"CPF nao autorizado.", ppwszOptionalStatusText);
         *pcpsiOptionalStatusIcon = CPSI_ERROR;
@@ -128,16 +121,20 @@ $replacement = @'
 
         return S_OK;
     }
-
-    // For local user, the domain and user name can be split from _pszQualifiedUserName (domain\username).
 '@
 
-if (-not $x.Contains($needle)) {
-    throw "Nao encontrei o ponto esperado em CSampleCredential.cpp."
+# Insere logo apos ZeroMemory dentro de GetSerialization.
+# Nao depende mais do comentario exato do sample Microsoft.
+$serializationAnchor = 'ZeroMemory(pcpcs, sizeof(*pcpcs));'
+$anchorIndex = $x.IndexOf($serializationAnchor)
+
+if ($anchorIndex -lt 0) {
+    throw "Nao encontrei a ancora de GetSerialization em CSampleCredential.cpp."
 }
-$x = $x.Replace($needle, $replacement)
-$x = $x.Replace("__TEST_PASS__", "Lab@Teste2026!")
-$x = $x.Replace("__TEST_CPF__", "12345678909")
+
+$insertAt = $anchorIndex + $serializationAnchor.Length
+$x = $x.Insert($insertAt, $cpfBlock)
+
 Set-Content $credPath $x -Encoding UTF8
 
 $providerPath = Join-Path $out "CSampleProvider.cpp"
@@ -223,7 +220,7 @@ if ($y2 -eq $y) {
 }
 Set-Content $providerPath $y2 -Encoding UTF8
 
-Write-Host "LabCPFProvider v4 preparado." -ForegroundColor Green
+Write-Host "LabCPFProvider v4.1 preparado." -ForegroundColor Green
 Write-Host "CPF de teste: 12345678909" -ForegroundColor Yellow
 Write-Host "Conta interna: AlunoLab" -ForegroundColor Yellow
 Write-Host "Provider GUID: {D2D9E531-8DB1-4C83-ABF9-810F70A1EB09}" -ForegroundColor Green

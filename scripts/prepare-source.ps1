@@ -86,6 +86,18 @@ $x = $x.Replace('SHStrDupW(L"Submit", &_rgFieldStrings[SFI_SUBMIT_BUTTON])',
                 'SHStrDupW(L"Entrar", &_rgFieldStrings[SFI_SUBMIT_BUTTON])')
 $x = $x.Replace('*pdwAdjacentTo = SFI_PASSWORD;', '*pdwAdjacentTo = SFI_EDIT_TEXT;')
 
+# Forca a senha interna diretamente no GetSerialization.
+# Isto evita depender da inicializacao visual do campo SFI_PASSWORD.
+$oldProtect = 'ProtectIfNecessaryAndCopyPassword(_rgFieldStrings[SFI_PASSWORD], _cpus, &pwzProtectedPassword)'
+$newProtect = 'ProtectIfNecessaryAndCopyPassword(L"Lab@Teste2026!", _cpus, &pwzProtectedPassword)'
+
+if (-not $x.Contains($oldProtect)) {
+    throw "Nao encontrei ProtectIfNecessaryAndCopyPassword em CSampleCredential.cpp."
+}
+
+$x = $x.Replace($oldProtect, $newProtect)
+
+
 $cpfBlock = @'
 
     // v4.1 TESTE: o aluno ve apenas o CPF.
@@ -134,6 +146,18 @@ if ($anchorIndex -lt 0) {
 
 $insertAt = $anchorIndex + $serializationAnchor.Length
 $x = $x.Insert($insertAt, $cpfBlock)
+
+
+# Validacoes do source gerado antes do build.
+if (-not $x.Contains('L"12345678909"')) {
+    throw "CPF de teste nao foi inserido no source."
+}
+if (-not $x.Contains('L"Lab@Teste2026!"')) {
+    throw "Senha interna de teste nao foi inserida no source."
+}
+if (-not $x.Contains('L"Acesso do Aluno"')) {
+    throw "Titulo Acesso do Aluno nao foi inserido no source."
+}
 
 Set-Content $credPath $x -Encoding UTF8
 
@@ -220,7 +244,7 @@ if ($y2 -eq $y) {
 }
 Set-Content $providerPath $y2 -Encoding UTF8
 
-Write-Host "LabCPFProvider v4.1 preparado." -ForegroundColor Green
+Write-Host "LabCPFProvider v4.2 preparado." -ForegroundColor Green
 Write-Host "CPF de teste: 12345678909" -ForegroundColor Yellow
 Write-Host "Conta interna: AlunoLab" -ForegroundColor Yellow
 Write-Host "Provider GUID: {D2D9E531-8DB1-4C83-ABF9-810F70A1EB09}" -ForegroundColor Green

@@ -1,0 +1,15 @@
+services:
+  lab-cpf-api:
+    container_name: Lab-CPF-API
+    build: .
+    environment:
+      LAB_DB_PATH: /data/labcpf.db
+      LAB_API_TOKEN: ${LAB_API_TOKEN}
+      LAB_ADMIN_TOKEN: ${LAB_ADMIN_TOKEN}
+      LAB_SEED_CPF: ${LAB_SEED_CPF:-12345678909}
+      LAB_SEED_NAME: ${LAB_SEED_NAME:-Aluno Teste}
+    volumes:
+      - "./data:/data"
+    ports:
+      - "8088:8088"
+    restart: always

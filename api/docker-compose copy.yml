@@ -1,0 +1,1942 @@
+# Jose Rodrigues Filho
+# V0.0.3 | PMFR Version
+# Last revision: 19/11/2025
+
+# the attribute `version` is obsolete
+#version: "3.9"
+
+services:
+  
+################################################## CONTAINERS ##################################################
+
+#
+# Portainer
+#
+
+  portainer:
+    container_name: Portainer
+    image: portainer/portainer-ce:2.20.2
+    command: -H unix:///var/run/docker.sock
+    
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      
+      - "${DOCKER_PATH}/Portainer/data:/data"
+      - "${DOCKER_PATH}/Proxy/ssl/:/certs"
+            
+    expose:
+      - "9000"
+      
+    networks:
+      - portainer
+      
+    restart: always
+
+########################################### Reverse Proxy ###########################################
+
+#     
+# Nginx Reverse Proxy
+#      
+      
+  proxy:
+    container_name: Reverse-Proxy
+    # Versao () 
+    image: jc21/nginx-proxy-manager:latest
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/Proxy/ssl:/custom-ssl"
+      - "${DOCKER_PATH}/Proxy/data:/data"
+      - "${DOCKER_PATH}/Proxy/letsencrypt:/etc/letsencrypt"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      
+    expose:  
+      - "81"
+
+    networks:
+      - portainer
+      - reverseproxy
+      - unifi
+      - monitoramento
+      - stirling-pdf
+      - automacao
+      - dhcp
+      - sga
+      - e-sus
+      - cracha
+      - termos
+      - ipam
+      - hotspot
+      - passbolt
+      - atestes
+      - agenda-veicular
+
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always 
+
+################################################## PostgreSQL #################################################
+
+#
+# PostgreSQL
+#
+
+  postgresql:
+    container_name: PostgreSQL
+    image: postgres:16-alpine
+    
+    cpus: 1.0
+    mem_limit: 2g
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/PostgreSQL/data:/var/lib/postgresql/data"
+
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+
+    ports:
+      - "15432:5432"
+
+    networks:
+      - atestes
+      - agenda-veicular
+
+#   "no", always, on-failure, unless-stopped
+    restart: always
+
+################################################## Iperf3 #################################################
+
+#
+# Iperf3 - Network Performance Test
+#
+
+  iperf3:
+    container_name: Iperf3
+    image: networkstatic/iperf3
+
+    command: -s
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+    ports:
+      - "5201:5201"
+
+    networks:
+      - monitoramento
+
+    restart: always
+
+################################################## FreeRADIUS ##################################################
+
+#
+# FreeRADIUS
+#
+
+  freeradius:
+   container_name: FreeRADIUS
+
+   image: freeradius/freeradius-server:3.2.10 #3.2.7
+
+   volumes:
+
+     - "/etc/localtime:/etc/localtime:ro"
+     - "/etc/timezone:/etc/timezone:ro"
+     - "${DOCKER_PATH}/Freeradius/clients.conf:/etc/freeradius/clients.conf:ro"
+     - "${DOCKER_PATH}/Freeradius/sql:/etc/freeradius/mods-enabled/sql:ro"
+     - "${DOCKER_PATH}/Freeradius/default:/etc/freeradius/sites-enabled/default:ro"
+
+   environment:
+     TZ: "America/Sao_Paulo"
+
+   command: ["freeradius", "-X"]
+
+   ports:
+     - "1812:1812/udp"
+     - "1813:1813/udp"
+
+   networks:
+     - freeradius
+
+   restart:
+     always
+
+################################################## UNIFI #################################################
+
+#
+# Unifi
+#
+
+  unifi:
+    container_name: UNIFI
+    # Versao ()
+    image: jacobalberty/unifi:v9.5.21 #v8.5.6 #v8.0.26 #v6.5.55 #5.11.50
+
+    labels:
+      - "unifi-controller"     
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/UNIFI/lib/:/var/lib/unifi"
+      - "${DOCKER_PATH}/UNIFI/log/:/var/log/unifi"
+      - "${DOCKER_PATH}/UNIFI/run/:/var/run/unifi"
+
+    environment:
+    
+      - TZ=America/Sao_Paulo
+   
+    ports:
+      - "3478:3478/udp"
+      - "10001:10001/udp"
+      - "6789:6789/tcp"
+      - "8080:8080/tcp"
+      - "8843:8843/tcp"
+
+    networks:
+      - unifi
+
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+################################################## Monitoramento ##################################################
+
+#
+# Zabbix-Mysql
+#
+
+  zabbix_mysql:
+    container_name: Zabbix-Mysql
+    image: mysql:8.4
+    
+    mem_limit: "4608m"  
+
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
+      - --log-bin-trust-function-creators=1
+      - --innodb-buffer-pool-size=3G
+
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"
+      - "${DOCKER_PATH}/Zabbix/mysql/data:/var/lib/mysql"
+
+    environment:
+      MYSQL_DATABASE: "${ZABBIX_MYSQL_DATABASE}"
+      MYSQL_USER: "${ZABBIX_MYSQL_USER}"
+      MYSQL_PASSWORD: "${ZABBIX_MYSQL_PASSWORD}"
+      MYSQL_ROOT_PASSWORD: "${ZABBIX_MYSQL_ROOT_PASSWORD}"
+
+    networks:
+      - monitoramento
+
+    restart: unless-stopped
+
+#
+# Zabbix-Server
+#
+
+  zabbix_server:
+    container_name: Zabbix-Server
+    image: zabbix/zabbix-server-mysql:alpine-7.4.13
+    
+    mem_limit: "2560m"
+
+    depends_on:
+      zabbix_mysql:
+        condition: service_healthy
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/Zabbix/scripts:/etc/zabbix/scripts/"
+      - "${DOCKER_PATH}/Zabbix/alertscripts:/usr/lib/zabbix/alertscripts/"
+
+    environment:
+      DB_SERVER_HOST: "Zabbix-Mysql"
+      DB_SERVER_PORT: "${ZABBIX_DB_SERVER_PORT}"
+
+      MYSQL_DATABASE: "${ZABBIX_MYSQL_DATABASE}"
+      MYSQL_USER: "${ZABBIX_MYSQL_USER}"
+      MYSQL_PASSWORD: "${ZABBIX_MYSQL_PASSWORD}"
+
+      ZBX_DEBUGLEVEL: "3"
+
+      ZBX_CACHESIZE: "512M"
+      ZBX_HISTORYCACHESIZE: "256M"
+      ZBX_HISTORYINDEXCACHESIZE: "128M"
+      ZBX_TRENDCACHESIZE: "128M"
+      ZBX_VALUECACHESIZE: "256M"
+      
+      ZBX_ENABLE_SNMP_TRAPS: "true"
+
+      ZBX_STARTPOLLERS: "20"
+      ZBX_STARTLLDPROCESSORS: "5"
+      ZBX_STARTDBSYNCERS: "6"
+      ZBX_STARTHISTORYWRITERS: "8"
+      ZBX_STARTPOLLERSUNREACHABLE: "10"
+      ZBX_STARTPINGERS: "20"
+      ZBX_STARTVMWARECOLLECTORS: "5"
+      ZBX_STARTHTTPPOLLERS: "10"
+      ZBX_STARTSNMPTRAPPER: "1"
+
+    ports:
+      - "10051:10051"
+
+    networks:
+      - monitoramento
+
+    restart: always
+
+#
+# Zabbix-Agent
+#
+
+  zabbix_agent:
+    container_name: Zabbix-Agent
+    image: zabbix/zabbix-agent:alpine-7.4.13
+    
+    mem_limit: "1024m"
+
+    depends_on:
+      zabbix_server:
+        condition: service_started
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+    environment:
+      ZBX_HOSTNAME: "Zabbix-Agent"
+      ZBX_SERVER_HOST: "Zabbix-Server"
+      ZBX_DEBUGLEVEL: "3"
+
+    networks:
+      - monitoramento
+
+    restart: always
+
+#
+# Zabbix-Web
+#
+
+  zabbix_web:
+    container_name: Zabbix-Web
+    image: zabbix/zabbix-web-nginx-mysql:alpine-7.4.13
+    
+    mem_limit: "1024m"
+
+    depends_on:
+      zabbix_mysql:
+        condition: service_healthy
+      zabbix_server:
+        condition: service_started
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/Proxy/ssl/francodarocha.sp.gov.br.crt:/etc/ssl/nginx/server.crt:ro"
+      - "${DOCKER_PATH}/Proxy/ssl/francodarocha.sp.gov.br.key:/etc/ssl/nginx/server.key:ro"
+
+    environment:
+      DB_SERVER_HOST: "Zabbix-Mysql"
+      DB_SERVER_PORT: "${ZABBIX_DB_SERVER_PORT}"
+
+      MYSQL_DATABASE: "${ZABBIX_MYSQL_DATABASE}"
+      MYSQL_USER: "${ZABBIX_MYSQL_USER}"
+      MYSQL_PASSWORD: "${ZABBIX_MYSQL_PASSWORD}"
+
+      ZBX_SERVER_HOST: "Zabbix-Server"
+      ZBX_SERVER_NAME: "PMFR | Diretoria de T.I"
+
+      PHP_TZ: "America/Sao_Paulo"
+
+      ZBX_ENABLE_SSL: "true"
+      ZBX_SSL_CERT_FILE: "/etc/ssl/nginx/server.crt"
+      ZBX_SSL_KEY_FILE: "/etc/ssl/nginx/server.key"
+
+    ports:
+      - "8888:8080"
+      - "8443:8443"
+
+    networks:
+      - monitoramento
+
+    restart: always
+
+#
+# Zabbix-Proxy
+#
+
+  zabbix_proxy:
+    container_name: Zabbix-Proxy
+    # Versao () 
+    image: zabbix/zabbix-proxy-sqlite3:alpine-7.0.12
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro" 
+      - "${DOCKER_PATH}/Zabbix/scripts/zabbix_proxy.psk:/var/lib/zabbix/enc/zabbix_proxy.psk" 
+
+    environment:
+
+      ZBX_HOSTNAME: "Zabbix-Proxy"
+      ZBX_SERVER_HOST: "Zabbix-Server"
+      ZBX_SERVER_PORT: "10051" # Zabbix Server Port (10051 is assumed if not provided)
+      ZBX_TLSACCEPT: "psk"
+      ZBX_TLSPSKIDENTITY: "ZBX-PSK-DOCKER"
+      ZBX_TLSPSKFILE: "/var/lib/zabbix/enc/zabbix_proxy.psk"  
+      ZBX_TLSCONNECT: "psk"
+
+    ports:
+      - "10061:10051"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# Grafana
+#
+
+  grafana:
+    container_name: Grafana
+    image: grafana/grafana
+    user: "root"
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/Grafana/data:/var/lib/grafana"
+      - "${DOCKER_PATH}/Grafana/ldap.toml:/etc/grafana/ldap.toml"
+      
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_SECURITY_ADMIN_PASSWORD}"
+      GF_INSTALL_PLUGINS: "camptocamp-prometheus-alertmanager-datasource,grafana-clock-panel,briangann-gauge-panel,alexanderzobnin-zabbix-app,grafana-polystat-panel,vonage-status-panel,grafana-piechart-panel,mtanda-histogram-panel,yesoreyeram-boomtable-panel,briangann-datatable-panel,grafana-simple-json-datasource,yesoreyeram-infinity-datasource,grafana-mqtt-datasource,agenty-flowcharting-panel,grafana-worldmap-panel,marcusolsson-json-datasource"
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "alexanderzobnin-zabbix-datasource"
+      GF_SERVER_PROTOCOL: "http"
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_PANELS_ENABLE_ALPHA: "true"
+      GF_AUTH_LDAP_ENABLED: "true"
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: "${GF_SMTP_HOST}"
+      GF_SMTP_USER: "${GF_SMTP_USER}"
+      GF_SMTP_PASSWORD: "${GF_SMTP_PASSWORD}"
+      GF_AUTH_TOKEN_ROTATION_INTERVAL_MINUTES: "3600"
+      GF_RENDERING_SERVER_URL: "http://Grafana-Render:8081/render"
+      GF_RENDERING_CALLBACK_URL: "http://Grafana:3000/"
+      GF_LOG_FILTERS: "rendering:debug"
+      
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      
+    expose:
+      - "3000"
+    networks:
+      - monitoramento
+    restart: always
+
+#
+# Grafana-Render
+#
+
+  grafana_render:
+    container_name: Grafana-Render
+    # Versao () 
+    image: grafana/grafana-image-renderer:latest
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro" 
+
+    environment:
+      ENABLE_METRICS: "true" 
+
+    expose:
+      - "8081"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# Prometheus
+#
+
+  prometheus:
+    container_name: Prometheus
+    # Versao () 
+    image: prom/prometheus
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/Prometheus/data:/etc/prometheus"
+ 
+    ports:
+      - "9090"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# Alert Manager
+#
+
+  alertmanager:
+    container_name: Alertmanager
+    # Versao () 
+    image: bitnami/alertmanager:latest
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro" 
+      
+      - "${DOCKER_PATH}/Prometheus/data/alertmanager/config.yml:/opt/bitnami/alertmanager/conf/config.yml"
+               
+    ports:
+      - "9093"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# Blackbox Exporter
+#
+
+  blackbox_exporter:
+    container_name: Blackbox-Exporter
+    # Versao () 
+    image: prom/blackbox-exporter:master
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+#      - "${DOCKER_PATH}/Prometheus/data/blackbox/blackbox.yml:/config.yml"
+
+    environment:
+      - "--config.file=/config/blackbox.yml"
+      
+    ports:
+      - "9115:9115"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always 
+
+#
+# SNMP Exporter
+#
+
+  snmp_exporter:
+    container_name: SNMP-Exporter
+    #
+    image: quay.io/prometheus/snmp-exporter
+
+    command: --config.file=/etc/snmp_exporter/snmp.yml
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/Prometheus/data/snmp-exporter:/etc/snmp_exporter"
+
+    ports:
+     - "9116:9116"
+     - "116:116/udp"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# Speedtest
+#
+
+  speedtest:
+    container_name: Speedtest
+    # Versao () 
+    image: jraviles/prometheus_speedtest:latest
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro" 
+
+    expose:
+      - "9516"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always      
+
+#
+# Mosquitto MQTT Broker
+#
+
+  mosquitto:
+    container_name: MQTT
+    # Versao (1.6.10) 
+    image: eclipse-mosquitto:2.0.15
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro" 
+
+      - "${DOCKER_PATH}/MQTT:/mosquito"
+      - "${DOCKER_PATH}/MQTT/mosquitto.conf:/mosquitto/config/mosquitto.conf" # Default config mosquito.conf
+      - "${DOCKER_PATH}/MQTT/password.txt:/mosquitto/config/password.txt" #
+
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+      - "8883:8883"
+      - "1884:1884"
+      - "8000:8000"
+
+    networks:
+      - monitoramento
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always  
+
+################################################## Zabbix C.O.I Dashboard ###############################################
+
+#
+# Zabbix C.O.I Dashboard
+#
+
+  zabbix_dashboard_coi:
+    container_name: Zabbix-Dashboard-COI
+    image: zabbix-dashboard-coi
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+    environment:
+      ZABBIX_URL: "${ZABBIX_DASHBOARD_URL}"
+      ZABBIX_TOKEN: "${ZABBIX_DASHBOARD_TOKEN}"
+      ZABBIX_GROUP_IDS: "${ZABBIX_DASHBOARD_GROUP_IDS}"
+      ZABBIX_GROUP_ID: "${ZABBIX_DASHBOARD_GROUP_ID}"
+      REFRESH_SECONDS: "70"
+      POLL_SECONDS: "60"
+      DOWNTIME_LOOKBACK_HOURS: "168"
+      PORT: "6145"
+      LOG_LEVEL: "INFO"
+
+    build: ./containers/C.O.I
+
+    expose:
+      - "6145"
+
+    networks:
+      - monitoramento
+
+#   "no", always, on-failure, unless-stopped
+    restart:
+      always
+
+################################################## OpenSpeedTest ##################################################
+
+#
+# OpenSpeedTest
+#
+
+  openspeedtest:
+    container_name: Open-SpeedTest
+    image: openspeedtest/latest
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+    environment:
+      SET_SERVER_NAME: "PMFR - Diretoria de T.I"
+    expose:
+      - "3001"
+      - "3000"
+    networks:
+      - monitoramento
+
+    restart: always
+
+################################################## Stirling-PDF ##################################################
+
+#     
+# Stirling-PDF
+#      
+
+################################################## CI/CD ##################################################
+
+# docker exec Jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+# chown -R 1000:1000 /opt/docker/containers/Jenkins
+# 81882c9a88a34fe9ba09d39e7c71e0f0
+
+#     
+# Jenkins
+#      
+      
+  jenkins:
+    container_name: Jenkins
+    # Versao () 
+    image: jenkins/jenkins:lts
+#    privileged: true
+#    user: root
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      
+      - "${DOCKER_PATH}/Jenkins:/var/jenkins_home"
+
+    expose:
+      - "8080"
+      - "50000"
+
+    networks:
+      - automacao
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+################################################## FTP ##################################################
+
+#     
+# FTP
+#      
+      
+  ftp:
+    container_name: FTP
+    # Versao () 
+    image: fauria/vsftpd
+
+    volumes:
+
+      - "${DOCKER_PATH}/Stirling-PDF:/home/vsftpd:rw"
+
+    ports:
+     - "21:21"
+
+    environment:
+    
+      FTP_USER: "${FTP_USER}"
+      FTP_PASS: "${FTP_PASS}"
+      PASV_ADDRESS: "${FTP_PASV_ADDRESS}"
+      PASV_MIN_PORT: 21000
+      PASV_MAX_PORT: 21010
+      FILE_OPEN_MODE: "0666"
+      LOCAL_UMASK: "022"
+      LOG_STDOUT: "YES"
+       
+    networks:
+      - stirling-pdf
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+################################################## KEA ##################################################
+
+#     
+# KEA
+#      
+      
+  kea:
+    container_name: Gerenciador-KEA
+    # Versao () 
+    image: kea
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/KEA/LOGs/auth.log:/var/www/html/Logs/auth.log"
+      - "${DOCKER_PATH}/KEA/Backups:/home"
+
+    environment:
+    
+      KEA_DATABASE_HOST: "${KEA_DATABASE_HOST}"
+      KEA_DATABASE_PORT: "${KEA_DATABASE_PORT}" 
+      KEA_DATABASE_USER: "${KEA_DATABASE_USER}" 
+      KEA_DATABASE_PASSWORD: "${KEA_DATABASE_PASSWORD}" 
+      KEA_DATABASE_NAME: "${KEA_DATABASE_NAME}"
+      KEA_COMPANY_NAME_ONLY: "${KEA_COMPANY_NAME_ONLY}"
+      KEA_COMPANY_LOGO: "img/logo.png" # Default is "img/logo.png"
+      KEA_COMPANY_LOGO_INDEX: "img/pmfr-logo.png" # Default is "img/pmfr-logo.png"
+      KEA_LOG_ADMIN_USERS: "${KEA_LOG_ADMIN_USERS}" # Usuários com acesso ao log (separados por vírgula)
+
+    build: ./containers/KEA/Gerenciador
+
+    expose:
+      - "80"
+
+    networks:
+      - dhcp
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#     
+# Mysql Gerenciador-KEA
+#      
+      
+  mysql_kea:
+    container_name: MySQL-KEA
+    # Versao (5.7) 
+    image: mysql:5.7
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+    
+      - "${DOCKER_PATH}/KEA/BD/data:/var/lib/mysql"
+
+    environment:
+ 
+      KEA_MYSQL_ROOT_PASSWORD: "${KEA_DATABASE_PASSWORD}"
+      KEA_MYSQL_DATABASE: "${KEA_DATABASE_NAME}"
+ 
+      ## Não alterar para expose, o servidor KEA acessa externamente 
+    ports:
+      - "3309:3306"
+
+    networks:
+      - dhcp
+      - freeradius  
+     
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+################################################ Evolution API ##########################################
+
+#
+# Evolution API
+#
+
+  evolution-postgres:
+   container_name: Evolution-Postgres
+   image: postgres:16
+
+   volumes:
+     - "/etc/localtime:/etc/localtime:ro"
+     - "/etc/timezone:/etc/timezone:ro"
+     - "${DOCKER_PATH}/Evolution/postgres/data:/var/lib/postgresql/data"
+
+   environment:
+     POSTGRES_DB: "evolution"
+     POSTGRES_USER: "evolution"
+     POSTGRES_PASSWORD: "evolution123"
+
+   networks:
+     - monitoramento
+
+   restart:
+     always
+
+  evolution-redis:
+   container_name: Evolution-Redis
+   image: redis:7-alpine
+
+   command: redis-server --appendonly yes
+
+   volumes:
+     - "/etc/localtime:/etc/localtime:ro"
+     - "/etc/timezone:/etc/timezone:ro"
+     - "${DOCKER_PATH}/Evolution/redis/data:/data"
+
+   networks:
+     - monitoramento
+
+   restart:
+     always
+
+  evolution-api:
+   container_name: Evolution-API
+   image: evoapicloud/evolution-api:2.4.0-rc2
+
+   depends_on:
+     - evolution-postgres
+     - evolution-redis
+
+   volumes:
+     - "/etc/localtime:/etc/localtime:ro"
+     - "/etc/timezone:/etc/timezone:ro"
+     - "${DOCKER_PATH}/Evolution/instances:/evolution/instances"
+
+   environment:
+     TZ: "America/Sao_Paulo"
+
+     SERVER_TYPE: "http"
+     SERVER_PORT: "8080"
+     SERVER_URL: "http://192.168.0.244:8090"
+
+     AUTHENTICATION_API_KEY: "oqWjCHSoNGQvnNosGI83yv2NoqhoxOiZVZJEliaRA63sJ7lQTDeb8J8SHjYpKUfz"
+
+     DATABASE_ENABLED: "true"
+     DATABASE_PROVIDER: "postgresql"
+     DATABASE_CONNECTION_URI: "postgresql://evolution:evolution123@Evolution-Postgres:5432/evolution?schema=public"
+
+     CACHE_REDIS_ENABLED: "true"
+     CACHE_REDIS_URI: "redis://Evolution-Redis:6379"
+     CACHE_REDIS_PREFIX_KEY: "evolution"
+     CACHE_REDIS_SAVE_INSTANCES: "true"
+     CONFIG_SESSION_PHONE_CLIENT: "Evolution API"
+     CONFIG_SESSION_PHONE_NAME: "Chrome"
+
+     CORS_ORIGIN: "*"
+     CORS_METHODS: "GET,POST,PUT,DELETE"
+     CORS_CREDENTIALS: "true"
+
+   ports:
+     - "8090:8080"
+
+   networks:
+     - monitoramento
+
+   restart:
+     always
+
+################################################ Whatsapp API ##########################################
+
+#
+# Whatsapp API
+#
+
+  whatsapp-api:
+    container_name: Whatsapp-API-WWeb.js
+    # Versao () 
+    image: wwebjsbot 
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/BOT/WWebjs/LAPS.txt:/opt/scripts/LAPS.txt"
+      - "${DOCKER_PATH}/BOT/WWebjs/commands/tokens.json:/opt/scripts/commands/tokens.json:rw"
+      - "${DOCKER_PATH}/BOT/WWebjs/commands/QRcode/wwebjs_auth:/opt/scripts/.wwebjs_auth:rw"
+      - "${DOCKER_PATH}/BOT/WWebjs/commands/QRcode/wwebjs_cache:/opt/scripts/.wwebjs_cache:rw"
+
+    environment:    
+      # Default
+      EMPRESA: "PMFR WWeb.js" # Identificação da empresa
+      PORTA: "${PORTA}" 
+      CELULAR: "${CELULAR}" 
+      COPYRIGHT: "${COPYRIGHT}"
+      FAST: "${FAST}"
+      # Zabbix
+      ZABBIXTOKEN: "${ZABBIXTOKEN}"
+      ZABBIXUrl: "${ZABBIXUrl}"
+      ZABBIXGROUPID: "${ZABBIXGROUPID}"
+      # LAPS
+      LDAP_URL: "${LDAP_URL}"
+      LDAP_BIND_DN: "${LDAP_BIND_DN}"
+      LDAP_PASSWORD: "${LDAP_PASSWORD}"
+      # Adicionar/Remover números 
+      # curl -X POST http://localhost:3001/adicionarNumero -H "Content-Type: application/json" -d '{"numero": "5511999276145"}'
+      # curl -X POST http://localhost:3001/removerNumero -H "Content-Type: application/json" -d '{"numero": "5511999276145"}'
+      # Mikrotik
+      VISITANTES_MIKROTIK_IP: "${VISITANTES_MIKROTIK_IP}"
+      VISITANTES_MIKROTIK_LOGIN: "${VISITANTES_MIKROTIK_LOGIN}"
+      VISITANTES_MIKROTIK_PASSWORD: "${VISITANTES_MIKROTIK_PASSWORD}"
+      VISITANTES_MIKROTIK_PROFILE: "${VISITANTES_MIKROTIK_PROFILE}"
+
+#    ports:
+#      - "3001:3000"
+      
+    build: ./containers/BOT/WWebjs
+
+    network_mode: host
+
+#    networks:
+#      - bot
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      unless-stopped      
+
+#
+# Whatsapp Visitantes
+#
+
+  visitantes-bot:
+   container_name: Visitantes-Bot
+   image: visitantes-bot
+
+   build: ./containers/BOT/Visitantes
+    
+   env_file:
+   - ./containers/BOT/Visitantes/.env
+
+   volumes:
+     - "/etc/localtime:/etc/localtime:ro"
+     - "${DOCKER_PATH}/BOT/Visitantes/session:/opt/bot-visitantes/session"
+     - "${DOCKER_PATH}/BOT/Visitantes/temp:/opt/bot-visitantes/temp"
+     - "${DOCKER_PATH}/BOT/Visitantes/logs:/opt/bot-visitantes/logs"
+
+   environment:
+     TZ: "America/Sao_Paulo"
+
+   ports:
+     - "${VISITANTES_PAINEL_PORTA:-3880}:${VISITANTES_PAINEL_PORTA:-3880}"
+
+   networks:
+     - monitoramento
+
+   healthcheck:
+     test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${VISITANTES_PAINEL_PORTA:-3880}/health >/dev/null || exit 1"]
+     interval: 30s
+     timeout: 5s
+     retries: 3
+     start_period: 60s
+
+   restart:
+     always
+
+################################################## OpenWA ##################################################
+
+#
+# OpenWA
+#
+
+  openwa:
+    container_name: OpenWA
+    image: ghcr.io/rmyndharis/openwa:latest
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "${DOCKER_PATH}/OpenWA/data:/app/data"
+
+    environment:
+      TZ: "America/Sao_Paulo"
+
+    ports:
+      - "3013:2785"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+################################################# Novosga ################################################
+
+#
+# NovoSGA-Web
+#
+
+  novosga_web:
+    container_name: NovoSGA-Web
+    image: joserodriguesfilho/sgapmfrad-https:1.0 #joserodriguesfilho/sgapmfrad
+    
+    cpus: 2.0
+    mem_limit: 3g
+   
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/SGA/back-ups:/var/www/html/novosga/config/back-ups/:rw" 
+
+    environment:
+      
+      DATABASE_HOST: "192.168.0.123" # Utilizando banco de dados externo
+      DATABASE_PORT: "${SGA_DATABASE_PORT}" 
+      DATABASE_USER: "${SGA_DATABASE_USER}" 
+      DATABASE_PASSWORD: "${SGA_DATABASE_PASSWORD}" 
+      DATABASE_NAME: "${SGA_DATABASE_NAME}" 
+      DOMAIN_NAME: "${SGA_DOMAIN_NAME}" 
+      BOBINA_PASSWORD: "${SGA_BOBINA_PASSWORD}"
+      BOBINA: "${SGA_BOBINA}"
+      IP: "${IP}" # IP Docker
+      PORTA: "${SGA_PORTA}" 
+      MENSAGEM_TRIAGEM: "${SGA_MENSAGEM_TRIAGEM}" 
+      MENSAGEM_TV: "${SGA_MENSAGEM_TV}"
+      MENSAGEM_TV_VELOCIDADE: "${SGA_MENSAGEM_TV_VELOCIDADE}" 
+      VIDEO_PLAYLIST: "${SGA_VIDEO_PLAYLIST}"
+      H_ATUALIZAR_TV: "${SGA_H_ATUALIZAR_TV}"
+      M_ATUALIZAR_TV: "${SGA_M_ATUALIZAR_TV}"
+
+    expose:
+      - "80"
+
+    networks:
+      - sga
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# NovoSGA-MySQL
+#
+
+# Migrado para o servidor 0.123
+
+################################################## E-sus ##################################################
+
+#     
+# E-sus
+#      
+      
+  e-sus:
+    container_name: e-SUS
+    # Versao () 
+    image: e-sus
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+    environment:
+      HOMOLOGACAO: "${ESUS_HOMOLOGACAO}"
+      CELULAR: "${ESUS_CELULAR}"
+      VERSION: "${ESUS_VERSION}"
+      ALLOWED_IPS: "${ESUS_ALLOWED_IPS}" 
+      MYSQL_SERVER: "${ESUS_MYSQL_SERVER}"
+      MYSQL_USER: "${ESUS_MYSQL_USER}"
+      MYSQL_PASSWORD: "${ESUS_MYSQL_PASSWORD}"
+      MYSQL_DATABASE: "${ESUS_MYSQL_DATABASE}"
+
+    build: ./containers/e-SUS
+    expose:
+      - "80"
+    networks:
+      - e-sus
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always          
+
+#     
+# E-sus Mysql
+#      
+      
+  e-sus_mysql:
+    container_name: E-sus-MySQL
+    # Versao () 
+    image: mysql:5.7
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/e-SUS/mysql/data:/var/lib/mysql"
+
+    environment:
+    
+      MYSQL_ROOT_PASSWORD: "${ESUS_MYSQL_PASSWORD}"
+       
+    ports:
+      - "3308:3306"
+
+    networks:
+      - e-sus
+      
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+################################################ Monitoramento Customizado ###############################################
+
+################################################## Sistemas Customizados #################################################
+
+#
+# Sistemas Customizados
+#
+
+# Cracha
+
+  cracha:
+    container_name: Cracha
+    # Versao ()
+    image: cracha
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+      - "${DOCKER_PATH}/Customized-Systems/Cracha/log/cracha.log:/var/www/html/log/cracha.log:rw"
+     
+    expose:
+      - "80"
+
+    environment:
+      LDAP_SERVER: "${LDAP_SERVER}"
+      LDAP_DN: "${CRACHA_LDAP_DN}"
+      LDAP_PASSWORD: "${CRACHA_LDAP_PASSWORD}"
+      LDAP_BASE_DN: "${LDAP_BASE_DN}"
+      LDAP_IPS_PERMITIDOS: "${CRACHA_LDAP_IPS_PERMITIDOS}"
+      
+    build: ./containers/Customized-Systems/Cracha
+
+    networks:
+      - cracha
+
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      unless-stopped
+
+# Gerador de Termo de Entrega
+
+  termos:
+    container_name: Gerador-de-Termo-de-Entrega
+    # Versao ()
+    image: termos
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/Customized-Systems/Termos/log:/var/www/html/log"
+      - "${DOCKER_PATH}/Customized-Systems/Termos/storage:/var/www/html/storage"
+
+    expose:
+      - "80"
+
+    environment:
+      LDAP_SERVER: "${LDAP_SERVER}"
+      LDAP_DN: "${TERMOS_LDAP_DN}"
+      LDAP_PASSWORD: "${TERMOS_LDAP_PASSWORD}"
+      LDAP_BASE_DN: "${LDAP_BASE_DN}"
+#      LDAP_IPS_PERMITIDOS: "${TERMOS_LDAP_IPS_PERMITIDOS}"
+
+    build: ./containers/Customized-Systems/Termos/PHP/termo
+
+    networks:
+      - termos
+
+#   "no", always, on-failure, unless-stopped
+    restart:
+      unless-stopped
+
+################################################## IPAM ##################################################
+
+#
+# IPAM WEB
+#
+
+  phpipam-web:
+    container_name: IPAMWEB
+    # Versao ()
+    image: phpipam/phpipam-www:latest
+    expose:
+      - "80"
+
+    environment:
+      TZ: "America/Sao_Paulo"
+      IPAM_DATABASE_HOST: "${IPAM_DATABASE_HOST}"
+      IPAM_DATABASE_PASS: "${IPAM_DATABASE_PASS}"
+      IPAM_FOOTER_MESSAGE: "${IPAM_FOOTER_MESSAGE}"
+      IPAM_DISABLE_INSTALLER: "${IPAM_DISABLE_INSTALLER}"
+      IPAM_DATABASE_WEBHOST: "%"
+      IPAM_BASE: "${IPAM_BASE}"
+      IPAM_TRUST_X_FORWARDED: "${IPAM_TRUST_X_FORWARDED}"
+      
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+    depends_on:
+      - phpipam-mariadb
+     
+    networks:
+      - ipam
+
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always
+
+#
+# IPAM CRON
+#
+
+  phpipam-cron:
+    container_name: IPAMCRON
+   
+    image: phpipam/phpipam-cron:latest
+
+    environment:
+      - TZ=America/Sao_Paulo
+      - IPAM_DATABASE_HOST=${IPAM_DATABASE_HOST}
+      - IPAM_DATABASE_PASS=${IPAM_DATABASE_PASS}
+      - SCAN_INTERVAL=${SCAN_INTERVAL}
+      - IPAM_DISABLE_INSTALLER=${IPAM_DISABLE_INSTALLER}
+
+    networks:
+      - ipam
+
+#   "no", always, on-failure, unless-stopped      
+    restart: 
+      unless-stopped
+
+    depends_on:
+      - phpipam-mariadb
+
+#
+# IPAM BD
+#
+
+  phpipam-mariadb:
+    # Versao ()
+    container_name: IPAMDB
+
+    image: mariadb:latest
+    environment:
+      - MYSQL_ROOT_PASSWORD=${IPAM_DATABASE_PASS}
+
+    networks:
+      - ipam
+
+#   "no", always, on-failure, unless-stopped      
+    restart: 
+      unless-stopped
+
+    volumes:
+      - phpipam-db-data:/var/lib/mysql
+
+################################################## WIFI ##################################################
+
+#     
+# WIfi Colaboradores
+#      
+      
+  wifi-colaboradores:
+    container_name: Wi-Fi-Colaboradores
+    # Versao () 
+    image: colaboradores
+
+    volumes:
+
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      
+    environment:
+      HOMOLOGACAO: "${COLABORADORES_HOMOLOGACAO}"
+      IPS_PERMITIDOS: "${COLABORADORES_IPS_PERMITIDOS}"
+      MIKROTIK_IP: "${COLABORADORES_MIKROTIK_IP}"
+      MIKROTIK_LOGIN: "${COLABORADORES_MIKROTIK_LOGIN}"
+      MIKROTIK_PASSWORD: "${COLABORADORES_MIKROTIK_PASSWORD}"
+
+    build: ./containers/WIFI/colaboradores
+    ports:
+      - "3195:80"
+
+    networks:
+      - hotspot
+
+#   "no", always, on-failure, unless-stopped      
+    restart:
+      always  
+
+################################################## Passbolt #################################################
+# chown -R 33:33 ${DOCKER_PATH}/Passbolt/data/gpg/
+# chmod -R 700 ${DOCKER_PATH}/Passbolt/data/gpg/
+# docker exec -it Passbolt su -s /bin/bash -c "./bin/cake passbolt send_test_email -r jose.rodrigues@francodarocha.sp.gov.br" www-data
+# docker exec -it Passbolt su -s /bin/bash -c "./bin/cake passbolt register_user -u jose.rodrigues@francodarocha.sp.gov.br -f Jose -l Rodrigues -r admin" www-data
+# -r admin para -r user (se não quiser que a conta seja admin)
+
+# https://hub.docker.com/r/passbolt/passbolt/
+
+#
+# Passbolt DB
+#
+
+#
+# Passbolt
+#
+
+################################################## Adminer ##################################################      
+
+#
+# Adminer
+#
+
+  adminer:
+    container_name: Adminer
+    image: adminer
+
+    environment:
+    
+      ADMINER_DESIGN: "pepa-linha"
+#      ADMINER_PLUGINS: "" #Separated by space, e.g. tables-filter tinymce
+      PHP_CLI_MEMORY_LIMIT: "512M" 	
+      PHP_MAX_EXECUTION_TIME: "0" 	
+      PHP_POST_MAX_SIZE: "512M" 	
+      PHP_UPLOAD_MAX_FILESIZE: "512M"
+
+    expose:
+      - "8080"
+
+    networks:
+      - dhcp
+      - e-sus
+      - ipam
+      - reverseproxy
+      - sga
+      - monitoramento
+
+########################################### Atestes & Laudos ###########################################
+
+#
+# Atestes - Backend
+#
+
+  atestes_backend:
+    container_name: Atestes-Backend
+    # Versao () 
+    image: atestes-backend
+
+    build:
+      context: ./containers/Ateste/backend
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/Ateste/data/uploads:/app/uploads"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/Ateste/data/pdfs:/app/pdfs"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/Ateste/data/backups:/app/backups"
+
+    env_file:
+      - ./containers/Ateste/backend/.env
+      
+    environment:
+      RESTRICT_DIRECT_BACKEND: "true"
+      ALLOWED_BACKEND_SOURCE_CIDRS: "127.0.0.1/32,::1/128,192.168.0.0/16"
+
+    expose:
+      - "8001"
+      
+    #  
+    mem_limit: 1g
+    memswap_limit: 1g
+
+    networks:
+      - atestes
+
+    restart: always
+
+#
+# Atestes - Frontend
+#
+
+  atestes_frontend:
+    container_name: Atestes-Frontend
+    # Versao () 
+    image: atestes-frontend
+
+    build:
+      context: ./containers/Ateste/frontend
+      args:
+        REACT_APP_BACKEND_URL: ${ATESTES_BACKEND_URL:-/api}
+        REACT_APP_SHOW_BETA_BADGE: ${ATESTES_SHOW_BETA_BADGE:-false}
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+    ports:
+      - "8088:80"
+      
+    #  
+    mem_limit: 1g
+    memswap_limit: 1g
+
+    depends_on:
+      - atestes_backend
+
+    networks:
+      - atestes
+
+    restart: always
+
+############################################ Agenda Veicular ###########################################
+
+#
+# Agenda Veicular - Backend
+#
+
+  agenda_veicular_backend:
+    container_name: Agenda-Veicular-Backend
+
+    image: agenda-veicular-backend
+    build:
+      context: ./containers/Agenda-Veicular/backend
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - "${DOCKER_PATH}/Agenda-Veicular/data:/app/backups"
+
+    env_file:
+      - ./containers/Agenda-Veicular/backend/.env
+
+    environment:
+      BACKUP_DIR: "/app/backups"
+
+    expose:
+      - "8000"
+
+    networks:
+      - agenda-veicular
+
+    restart: always
+
+#
+# Agenda Veicular - Frontend
+#
+
+  agenda_veicular_frontend:
+    container_name: Agenda-Veicular-Frontend
+
+    image: agenda-veicular-frontend
+    build:
+      context: ./containers/Agenda-Veicular/frontend
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+    expose:
+      - "80" 
+
+    depends_on:
+      - agenda_veicular_backend
+
+    networks:
+      - agenda-veicular
+      - reverseproxy
+
+    restart: always
+
+################################################## N8N #################################################
+
+#
+# N8N
+# 
+# chown -R 1000:1000 /opt/docker/containers/N8N/n8n_data
+#
+
+################################################## WAHA #################################################
+
+#
+# WAHA - WhatsApp API
+#
+
+  waha:
+    container_name: Waha-WhatsAppAPI
+
+    image: devlikeapro/waha:latest
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/WAHA/sessions:/app/.sessions"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/WAHA/ssh:/root/.ssh"
+      - "${DOCKER_PATH:?DOCKER_PATH nao definido}/WAHA/scripts/webhook-squid.js:/app/webhook-squid.js:ro"
+
+    environment:
+
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_LOG_LEVEL: info
+
+      WAHA_API_KEY: "${WAHA_API_KEY}"
+      WAHA_DASHBOARD_USERNAME: "${WAHA_DASHBOARD_USERNAME}"
+      WAHA_DASHBOARD_PASSWORD: "${WAHA_DASHBOARD_PASSWORD}"
+      WHATSAPP_SWAGGER_USERNAME: "${WHATSAPP_SWAGGER_USERNAME}"
+      WHATSAPP_SWAGGER_PASSWORD: "${WHATSAPP_SWAGGER_PASSWORD}"
+
+      WHATSAPP_HOOK_URL: "${WAHA_WEBHOOK_URL}"
+      WHATSAPP_HOOK_EVENTS: "message"
+      
+      WHATSAPP_START_SESSION: "default"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+
+      WHATSAPP_API_PORT: "3002"
+      PORT: "3002"
+
+      WAHA_HOST: "127.0.0.1"
+      WAHA_INTERNAL_PORT: "3002"
+      WAHA_PROXY_PORT: "3000"
+
+      SESSION: "default"
+
+      SSH_HOST: "${SQUID_SSH_HOST}"
+      SSH_USER: "${SQUID_SSH_USER}"
+      SERVICE: "${SQUID_SERVICE}"
+
+      WEBHOOK_URL: "${WAHA_WEBHOOK_URL}"
+      ALLOWED: "${SQUID_ALLOWED_NUMBERS}"
+
+    ports:
+      - "3010:3000"
+
+    mem_limit: 1g
+    memswap_limit: 1g
+
+    networks:
+      - monitoramento
+      
+    command: >
+      sh -c "
+        apt update &&
+        apt install -y openssh-client &&
+        mkdir -p /root/.ssh &&
+        chmod 700 /root/.ssh &&
+        touch /root/.ssh/known_hosts &&
+        ssh-keygen -R ${SQUID_SSH_HOST} -f /root/.ssh/known_hosts >/dev/null 2>&1 || true &&
+        ssh-keyscan -H ${SQUID_SSH_HOST} >> /root/.ssh/known_hosts 2>/dev/null &&
+        chmod 600 /root/.ssh/known_hosts &&
+        node /app/webhook-squid.js &
+        npm run start:prod
+      "
+
+    restart:
+      always
+
+#
+# cAdvisor
+#
+
+  cadvisor:
+    container_name: cAdvisor
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+
+    privileged: true
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "/:/rootfs:ro"
+      - "/var/run:/var/run:ro"
+      - "/sys:/sys:ro"
+      - "/var/lib/docker:/var/lib/docker:ro"
+      - "/dev/disk:/dev/disk:ro"
+
+    devices:
+      - "/dev/kmsg:/dev/kmsg"
+
+    ports:
+      - "8765:8080"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+################################################## Gatus ##################################################
+
+#
+# Gatus
+#
+
+  gatus:
+    container_name: Gatus
+    image: ghcr.io/twin/gatus:stable
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/Gatus/config:/config"
+
+    environment:
+      TZ: "America/Sao_Paulo"
+
+    ports:
+      - "8085:8080"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+################################################## Uptime Kuma ##################################################
+
+#
+# Uptime Kuma
+#
+
+  uptime-kuma:
+    container_name: Uptime-Kuma
+    image: louislam/uptime-kuma:2
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "${DOCKER_PATH}/Uptime-Kuma/data:/app/data"
+      # Necessário para monitorar Containers              
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+    environment:
+      TZ: "America/Sao_Paulo"
+
+    ports:
+      - "3011:3001"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+############################################ Painel Uptime Kuma WebSocket ############################################
+
+#
+# Painel Uptime Kuma WebSocket
+#
+
+  uptime-kuma-painel:
+    container_name: Uptime-Kuma-Painel
+    image: uptime-kuma-painel
+
+    build: ./${DOCKER_BUILD}/Uptime-Kuma-Painel
+
+    depends_on:
+      - uptime-kuma
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "${DOCKER_PATH}/Uptime-Kuma-Painel/server.js:/app/server.js:ro"
+      - "${DOCKER_PATH}/Uptime-Kuma-Painel/html:/app/html:ro"
+      - "${DOCKER_PATH}/Uptime-Kuma-Painel/data:/app/data"
+
+    environment:
+       TZ: "America/Sao_Paulo"
+       KUMA_URL: "${KUMA_URL}"
+       PAGE_REFRESH_INTERVAL_MS: "2000" # Default 15000
+       KUMA_USERNAME: "${KUMA_USERNAME}"
+       KUMA_PASSWORD: "${KUMA_PASSWORD}"
+       CSV_ADMIN_USERNAME: "${CSV_ADMIN_USERNAME:-}"
+       CSV_ADMIN_PASSWORD: "${CSV_ADMIN_PASSWORD:-}"
+       STATUS_PAGE_SLUG: "${STATUS_PAGE_SLUG}"
+       PAINEL_TITLE: "${PAINEL_TITLE}"
+       PAINEL_FOOTER_NAME: "${PAINEL_FOOTER_NAME}"
+       PAINEL_VERSION: "${PAINEL_VERSION}"
+       PORT: "3000"
+
+    ports:
+      - "3012:3000"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+################################################## Frigate ##################################################
+
+#
+# Frigate NVR
+#
+# Senha de Admin -> "docker logs Frigate | grep -i password"
+#
+
+  frigate:
+    container_name: Frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+
+    privileged: true
+    shm_size: "1gb"
+
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${DOCKER_PATH}/Frigate/config:/config
+      - /mnt/cameras:/media/frigate
+
+    ports:
+      - "8971:8971"
+      - "8554:8554" # RTSP feeds
+#      - "5000:5000" # Internal unauthenticated access. Expose carefully.
+      - "8555:8555/tcp" # WebRTC over tcp
+      - "8555:8555/udp" # WebRTC over udp
+
+    environment:
+      TZ: America/Sao_Paulo
+
+    networks:
+      - monitoramento
+
+    restart: always
+
+################################################## Teleport ##################################################
+
+#
+# Teleport
+#
+
+  teleport:
+    container_name: Teleport
+    hostname: teleport
+    image: public.ecr.aws/gravitational/teleport-distroless:18.10.0
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "${DOCKER_PATH}/Teleport/config:/etc/teleport"
+      - "${DOCKER_PATH}/Teleport/data:/var/lib/teleport"
+
+    expose:
+      - "3080"
+
+    networks:
+      - monitoramento
+
+    restart:
+      always
+
+################################################## Lab CPF API ##################################################
+
+#
+# API de autorizacao de CPF do Credential Provider
+#
+
+  lab-cpf-api:
+    container_name: Lab-CPF-API
+    # Versao (7.0.0)
+    image: lab-cpf-api
+
+    build:
+      context: ./containers/LabCPFProvider
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+
+      - "${DOCKER_PATH}/LabCPFProvider/data:/data"
+
+    environment:
+      TZ: "America/Sao_Paulo"
+      LAB_DB_PATH: "/data/labcpf.db"
+      LAB_API_TOKEN: "${LAB_API_TOKEN}"
+      LAB_ADMIN_TOKEN: "${LAB_ADMIN_TOKEN}"
+      LAB_SEED_CPF: "${LAB_SEED_CPF:-12345678909}"
+      LAB_SEED_NAME: "${LAB_SEED_NAME:-Aluno Teste}"
+
+    expose:
+      - "8088"
+
+    networks:
+      - reverseproxy
+
+#   "no", always, on-failure, unless-stopped
+    restart:
+      always
+
+################################################ VOLUMES #################################################
+
+volumes:
+  phpipam-db-data:
+  phpipam-logo:
+  
+################################################## REDE ##################################################
+
+networks:
+  portainer:
+    name: portainer
+
+  reverseproxy:
+    name: reverseproxy
+
+  postgres:
+    name: postgres
+
+  unifi:
+    name: unifi
+
+  freeradius:
+    name: freeradius
+
+  monitoramento:
+    name: monitoramento
+
+  stirling-pdf:
+    name: stirling-pdf
+
+  automacao:
+    name: automacao
+
+  dhcp:
+    name: dhcp
+
+#  bot:
+#    name: bot
+
+  sga:
+    name: sga
+    
+  e-sus:
+    name: e-sus
+    
+  cracha:
+    name: cracha
+    
+  termos:
+    name: termos    
+    
+  ipam:
+    name: ipam
+    
+  hotspot:
+    name: hotspot
+    
+  passbolt:
+    name: passbolt
+    
+  atestes:
+    name: atestes
+
+  agenda-veicular:
+    name: agenda-veicular
